@@ -6,42 +6,44 @@
 #include <pthread.h>
 
 typedef struct {
-    double cpu_coef;
-    double memory_coef;
+    double cpu;
+    double memory;
+    double connections;
 } Coeficients;
 
 typedef struct {
-    int cpu_free;
-    int mem_free;
+    unsigned int cpu_free;
+    unsigned int mem_free;
+    unsigned int connections;
 } Metrics;
 
 typedef struct {
     const char *name;
     const char *community;
-    int weight;
+    Metrics metrics;
+    unsigned int old_weight;
+    unsigned int weight;
 } Host;
 
 struct main_thread_info { /* Used as argument to run() */
     int periodicity;
     int num_servers;
-    Coeficients *coeficients;
 };
 
 struct server_thread_info { /* Used as argument to server_run() */
-    int id;    
-    Coeficients *coeficients;
+    int id;
 };
 
 void *run(void *arg);
 void *server_run(void *arg);
-int determineNewWeight(Host *server, Coeficients *coeficients);
-int getFreeCPU(int version, const char *community, const char *name_ip);
-int getFreeMem(int version, const char *community, const char *name_ip);
-FILE *exec_nmap(const char *name_ip);
+void determineNewWeights(int num_servers);
+void getMetrics(int id);
+FILE *exec_wget(const char *name_ip);
 FILE *exec_snmp(char *type, int version, const char *community, const char *name_ip, char *OID);
 FILE *exec_command(char *command);
 
 static Host *servers;
+static Coeficients *coefs;
 
 int main(int argc, char **argv)
 {
@@ -53,17 +55,18 @@ int main(int argc, char **argv)
     tinfo->periodicity = 5;
     tinfo->num_servers = 2;
 
-    tinfo->coeficients = (Coeficients *) malloc(sizeof(Coeficients));
-    tinfo->coeficients->cpu_coef = 0.1;
-    tinfo->coeficients->memory_coef = 0.9;
+    coefs = (Coeficients *) malloc(sizeof(Coeficients));
+    coefs->cpu = 0.4;
+    coefs->memory = 0.4;
+    coefs->connections = 0.2;
 
     servers = (Host *) malloc(tinfo->num_servers * sizeof(Host));
     servers[0].name = "192.168.56.102";
     servers[0].community = "public";  
-    servers[0].weight = 1;  
+    servers[0].old_weight = 1;  
     servers[1].name = "192.168.56.103";
     servers[1].community = "public";
-    servers[1].weight = 1;  
+    servers[1].old_weight = 1;
 
     ret = pthread_create(&thread, NULL, run, (void*) tinfo);
 
@@ -71,16 +74,15 @@ int main(int argc, char **argv)
 
     printf("Thread returns: %d\n", ret);
 
-    free(tinfo->coeficients);
     free(tinfo);
+    free(coefs);
+    free(servers);
 
     return (EXIT_SUCCESS);
 }
 
 void *run(void *arg) {
-    int i, ret, cnt = 1;
-    unsigned int min;
-    int *old_weight;
+    int i, ret, cnt = 1, new_weight;
     pthread_t *server_threads;
 
     struct main_thread_info *tinfo = (struct main_thread_info *) arg;
@@ -88,26 +90,16 @@ void *run(void *arg) {
 
     int num_servers = tinfo->num_servers;
 
-    old_weight = (int *) malloc(num_servers * sizeof(int));
     server_threads = malloc(num_servers * sizeof (pthread_t));
     sinfo = (struct server_thread_info *) malloc(num_servers * sizeof(struct server_thread_info));
-
-    for (i = 0; i < num_servers; i++) {
-      old_weight[i] = 1;
-    }
 
     printf("Main thread started!\n");
 
     while (1) {
-
         printf("Data collection %d!\n", cnt++);
 
         for (i = 0; i < num_servers; i++) {
-
             sinfo[i].id = i;
-            sinfo[i].coeficients = (Coeficients *) malloc(sizeof (Coeficients));
-            sinfo[i].coeficients = tinfo->coeficients;
-
             ret = pthread_create(&server_threads[i], NULL, server_run, (void*) &(sinfo[i]));
         }
 
@@ -115,20 +107,7 @@ void *run(void *arg) {
             pthread_join(server_threads[i], NULL);
         }
 
-        min = UINT_MAX;
-
-        for (i = 0; i < num_servers; i++) {
-printf("Server %s determined weight = %d\n", servers[i].name, servers[i].weight);
-            if((servers[i].weight > 0) && (servers[i].weight < min))
-              min = servers[i].weight;
-        }
-
-        for (i = 0; i < num_servers; i++) {
-            servers[i].weight = old_weight[i] + (int) ((double) servers[i].weight/min + 0.5);
-            servers[i].weight = (int) ((double) servers[i].weight / 2 + 0.5);
-            printf("Server %s new weight = %d\n", servers[i].name, servers[i].weight);
-        }
-
+        determineNewWeights(num_servers);
 
         sleep(tinfo->periodicity);
     }
@@ -139,114 +118,134 @@ printf("Server %s determined weight = %d\n", servers[i].name, servers[i].weight)
 void *server_run(void *arg) {
 
     struct server_thread_info *sinfo = (struct server_thread_info *) arg;
-    int weight, id;
+    int cpu_free, num_conn, mem_free;
+    int version = 1, id;
+    unsigned int weight = 0;
 
     id = sinfo->id;
 
     printf("Thread Server %s started!\n", servers[id].name);
 
-    servers[id].weight = determineNewWeight(&servers[id], sinfo->coeficients);
+    if(http_port_open(servers[id].name))
+    {
+        getMetrics(id);
+        printf("Free %% CPU for server %s = %d\n", servers[id].name, servers[id].metrics.cpu_free);
+        printf("Free %% Memory for server %s = %d\n", servers[id].name, servers[id].metrics.mem_free);
+        printf("Number of connections for server %s = %d\n", servers[id].name, servers[id].metrics.connections);
+
+        if (servers[id].metrics.cpu_free == -1)
+            servers[id].metrics.cpu_free = 0;
+
+        if (servers[id].metrics.mem_free == -1)
+            servers[id].metrics.mem_free = 0;
+    }
 
     printf("Thread Server %s ended!\n", servers[id].name);
 }
 
-int determineNewWeight(Host *server, Coeficients *coeficients) {
-    //printf("Server %s calculating new weight!\n", server->name);
+void determineNewWeights(int num_servers) {
 
-    int cpu_free, num_conn, mem_free;
-    int weight = 0;
+    int i;
+    unsigned int min, max;
 
-    int version = 1;
-    int interface_id = 0;
+    max = 0;
+    min = UINT_MAX;
 
-    if(http_port_open(server->name))
-    {
-        cpu_free = getFreeCPU(version, server->community, server->name);
-        printf("Free %% CPU for server %s = %d\n", server->name, cpu_free);
-        if (cpu_free == -1)
-            cpu_free = 0;
-
-        mem_free = getFreeMem(version, server->community, server->name);
-        printf("Free %% Memory for server %s = %d\n", server->name, mem_free);
-        if (mem_free == -1)
-            mem_free = 0;
-
-        weight = (int) ((double) (coeficients->cpu_coef * cpu_free + coeficients->memory_coef * mem_free) + 0.5);
+    for (i = 0; i < num_servers; i++) {
+        if((servers[i].metrics.connections > 0) && (servers[i].metrics.connections > max))
+          max = servers[i].metrics.connections;
     }
 
-    return weight;
+    for (i = 0; i < num_servers; i++) {
+
+        if (servers[i].metrics.connections == -1)
+            servers[i].metrics.connections = max;
+
+        if(max > 0)
+          servers[i].metrics.connections = (int) ((1 - (double) servers[i].metrics.connections/max) * 100 + 0.5);
+
+        printf("Server %s determined weight for connections = %d\n", servers[i].name, servers[i].metrics.connections);
+
+        servers[i].weight = (int) ((double) (coefs->cpu * servers[i].metrics.cpu_free + coefs->memory * servers[i].metrics.mem_free + coefs->connections * servers[i].metrics.connections) + 0.5);
+
+        printf("Server %s determined weight = %d\n", servers[i].name, servers[i].weight);
+
+        if((servers[i].weight > 0) && (servers[i].weight < min))
+          min = servers[i].weight;
+    }
+
+    for (i = 0; i < num_servers; i++) {
+        if(min > 0)
+          servers[i].weight = (int) ((double) servers[i].weight/min + 0.5);
+
+        if(servers[i].weight > 0)
+        {
+          servers[i].weight = servers[i].old_weight + servers[i].weight;
+          servers[i].weight = (int) ((double) servers[i].weight / 2 + 0.5);
+        }
+        else
+          servers[i].weight = 0;
+        
+        servers[i].old_weight = servers[i].weight;
+
+        printf("Server %s new weight = %d\n", servers[i].name, servers[i].weight);
+    }
 }
 
 int http_port_open(const char *name_ip) {
     FILE *fp;
-    char output[1024];
-    char *result;
+    char output[1024], *result;
+    int counter = 0;
 
-    fp = exec_nmap(name_ip);
+    fp = exec_wget(name_ip);
 
     while (fgets(output, sizeof (output) - 1, fp) != NULL) {
-        if(strstr(output, "80/tcp") != NULL) {
-            result = (char *) strtok(output, " ");
-            if (result != NULL) {
-                result = (char *) strtok(NULL, " ");
-            }
-            break;
+        counter++;
+        if(counter == 2 && strstr(output, "Connecting") != NULL && strstr(output, "connected") != NULL) {
+            return 1;
         } 
+        if(counter > 2)
+          break;
     }
-
-    if(result != NULL && strcmp(result, "open") == 0)
-        return 1;
     return 0;
 }
 
-int getFreeCPU(int version, const char *community, const char *name_ip) {
+void getMetrics(int id) {
     FILE *fp;
-    char output[1024];
-    char *OID = "1.3.6.1.2.1.25.3.3.1.2";
+    char output[1024], OIDs[1024];;
     int counter = 0;
     char *result = NULL, *res;
-    int int_res = -1;
+    int cpu_free = -1, mem_free = -1, mem_total = -1, connections = -1;
 
-    fp = exec_snmp("walk", version, community, name_ip, OID);
+    /* Free CPU percentage */
+
+    fp = exec_snmp("walk", 1, servers[id].community, servers[id].name, "1.3.6.1.2.1.25.3.3.1.2");
 
     while (fgets(output, sizeof (output) - 1, fp) != NULL) {
         if (strstr(output, "Timeout") == NULL) {
             counter++;
-
             result = (char *) strtok(output, " ");
             while (result != NULL) {
                 res = result;
                 result = (char *) strtok(NULL, " ");
             }
-
             result = (char *) strtok(res, "\r");
-
             if(counter == 1)
-              int_res = atoi(result);
+              cpu_free = atoi(result);
             else
-              int_res += atoi(result);
+              cpu_free += atoi(result);
         }
     }
-
-    if (int_res > -1 && counter > 0) {
-        int_res = (int) ((double) int_res/counter + 0.5);
-        int_res = 100 - int_res;
-    }
-
-    /* close */
     pclose(fp);
 
-    return int_res;
-}
+    if (cpu_free > -1 && counter > 0) {
+        cpu_free = (int) ((double) cpu_free/counter + 0.5);
+        cpu_free = 100 - cpu_free;
+    }
+    servers[id].metrics.cpu_free = cpu_free;
 
-int getFreeMem(int version, const char *community, const char *name_ip) {
-    FILE *fp;
-    char output[1024];
-    char *result = NULL, *res;
-    int int_free = -1, int_total = -1;
-    int counter = 0;
-
-    fp = exec_snmp("get", version, community, name_ip, "1.3.6.1.4.1.2021.4.11.0 1.3.6.1.4.1.2021.4.5.0");
+    /* Free Memory percentage, established TCP connections */
+    fp = exec_snmp("get", 1, servers[id].community, servers[id].name, "1.3.6.1.4.1.2021.4.11.0 1.3.6.1.4.1.2021.4.5.0 1.3.6.1.2.1.6.9.0");
 
     while (fgets(output, sizeof (output) - 1, fp) != NULL) {
         if (strstr(output, "Timeout") == NULL) {
@@ -256,59 +255,29 @@ int getFreeMem(int version, const char *community, const char *name_ip) {
                 result = (char *) strtok(NULL, " ");
             }
             result = (char *) strtok(res, "\r");
-
             if (strstr(output, "1.3.6.1.4.1.2021.4.11.0") != NULL)
-              int_free = atoi(result);
+              mem_free = atoi(result);
             else if (strstr(output, "1.3.6.1.4.1.2021.4.5.0") != NULL)
-              int_total = atoi(result);
+              mem_total = atoi(result);
+            else if (strstr(output, "1.3.6.1.2.1.6.9") != NULL)
+              connections = atoi(result);
         }
     }
-
     pclose(fp);
 
-    if(int_free > -1 && int_total > 0)
-        return (int) ((((double) int_free/int_total) * 100) + 0.5);
+    if(mem_free > -1 && mem_total > 0)
+        servers[id].metrics.mem_free = (int) ((((double) mem_free/mem_total) * 100) + 0.5);
     else
-        return -1;
+        servers[id].metrics.mem_free = -1;
+
+    servers[id].metrics.connections = connections;
 }
 
-/*
-int getEstablishedConnections(int version, char *community, char *name_ip, int interface_id) {
-    FILE *fp;
-    char output[1024];
-    char OID[128];
-    char *result = NULL, *res;
-    int int_res = -1;
-
-    sprintf(OID, "%s%d", "1.3.6.1.2.1.6.9.", interface_id);
-
-    fp = exec_command("get", version, community, name_ip, OID);
-
-    if (fgets(output, sizeof (output) - 1, fp) != NULL) {
-        if (strstr("Timeout", output) == NULL) {
-
-            result = (char *) strtok(output, " ");
-            while (result != NULL) {
-                res = result;
-                result = (char *) strtok(NULL, " ");
-            }
-
-            result = (char *) strtok(res, "\r");
-
-            int_res = atoi(result);
-        }
-    }
-
-    pclose(fp);
-
-    return int_res;
-}*/
-
-FILE *exec_nmap(const char *name_ip) {
+FILE *exec_wget(const char *name_ip) {
 
     char command[1024];
 
-    sprintf(command, "%s %s", "nmap -p 80", name_ip);
+    sprintf(command, "wget -O - %s 2>&1", name_ip);
 
     return exec_command(command);
 }
@@ -317,14 +286,14 @@ FILE *exec_snmp(char *type, int version, const char *community, const char *name
 
     char command[1024];
 
-    sprintf(command, "%s%s %s %d %s %s %s %s", "snmp", type, "-O enU -v", version, "-c", community, name_ip, OID);
+    sprintf(command, "snmp%s -O enU -v %d -c %s %s %s", type, version, community, name_ip, OID);
 
     return exec_command(command);
 }
 
 FILE *exec_command(char *command) {
     FILE *fp;
-    
+
     /* Open the command for reading. */
     fp = popen(command, "r");
     if (fp == NULL) {
