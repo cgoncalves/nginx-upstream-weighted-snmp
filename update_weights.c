@@ -23,6 +23,7 @@ typedef struct {
     Metrics metrics;
     unsigned int old_weight;
     unsigned int weight;
+    int up;
 } Host;
 
 struct main_thread_info { /* Used as argument to run() */
@@ -128,6 +129,8 @@ void *server_run(void *arg) {
 
     if(http_port_open(servers[id].name))
     {
+        servers[id].up = 1;
+
         getMetrics(id);
         printf("Free %% CPU for server %s = %d\n", servers[id].name, servers[id].metrics.cpu_free);
         printf("Free %% Memory for server %s = %d\n", servers[id].name, servers[id].metrics.mem_free);
@@ -139,6 +142,8 @@ void *server_run(void *arg) {
         if (servers[id].metrics.mem_free == -1)
             servers[id].metrics.mem_free = 0;
     }
+    else
+        servers[id].up = 0;
 
     printf("Thread Server %s ended!\n", servers[id].name);
 }
@@ -185,6 +190,9 @@ void determineNewWeights(int num_servers) {
         }
         else
           servers[i].weight = 0;
+
+        if(servers[i].up && servers[i].weight == 0)
+          servers[i].weight = 1;
         
         servers[i].old_weight = servers[i].weight;
 
