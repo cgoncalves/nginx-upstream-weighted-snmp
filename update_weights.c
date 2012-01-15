@@ -210,11 +210,14 @@ int http_port_open(const char *name_ip) {
     while (fgets(output, sizeof (output) - 1, fp) != NULL) {
         counter++;
         if(counter == 2 && strstr(output, "Connecting") != NULL && strstr(output, "connected") != NULL) {
+            fclose(fp);
             return 1;
-        } 
+        }
         if(counter > 2)
           break;
     }
+
+    fclose(fp);
     return 0;
 }
 
