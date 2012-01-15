@@ -49,11 +49,12 @@ typedef struct {
 } ngx_http_upstream_load_peer_t;
 
 struct ngx_http_upstream_load_peers_s {
+    /* data should be shared between processes */
     ngx_http_upstream_load_shm_block_t *shared;
     ngx_uint_t                          current;
     ngx_uint_t                          size_err:1;
-    ngx_uint_t                          no_rr:1;
-    ngx_uint_t                          weight_mode:2;
+    //ngx_uint_t                          no_rr:1;
+    //ngx_uint_t                          weight_mode:2;
     ngx_uint_t                          number;
     ngx_str_t                          *name;
     ngx_http_upstream_load_peers_t     *next;           /* for backup peers support (not used yet) */
@@ -63,22 +64,23 @@ struct ngx_http_upstream_load_peers_s {
 #define NGX_PEER_INVALID (~0UL)
 
 typedef struct {
-    ngx_http_upstream_load_peers_t     *peers;
-    ngx_uint_t                          current;
-    uintptr_t                          *tried;
-    uintptr_t                          *done;
-    uintptr_t                           data;
-    uintptr_t                           data2;
-} ngx_http_upstream_load_peer_data_t;
-
-typedef struct {
     /* the round robin data must be first */
-    ngx_http_upstream_rr_peer_data_t   rrp;
+    //ngx_http_upstream_rr_peer_data_t   rrp;
     ngx_uint_t                         coef_cpu;
     ngx_uint_t                         coef_memory;
     ngx_uint_t                         coef_tcpactive;
-    ngx_http_upstream_srv_conf_t        uscf;
-} ngx_http_load_srv_conf_t;
+    //ngx_http_upstream_srv_conf_t        uscf;
+} ngx_http_upstream_load_srv_conf_t;
+
+typedef struct {
+    ngx_http_upstream_load_srv_conf_t  *conf;
+    ngx_http_upstream_load_peers_t     *peers;
+    ngx_uint_t                          current;
+    uintptr_t                          *tried;
+    //uintptr_t                          *done;
+    uintptr_t                           data;
+    //uintptr_t                           data2;
+} ngx_http_upstream_load_peer_data_t;
 
 static ngx_int_t ngx_http_upstream_init_load(ngx_conf_t *cf,
     ngx_http_upstream_srv_conf_t *us);
@@ -90,10 +92,10 @@ static ngx_int_t ngx_http_upstream_init_load_peer(ngx_http_request_t *r,
     ngx_http_upstream_srv_conf_t *us);
 static char *ngx_http_upstream_load(ngx_conf_t *cf, ngx_command_t *cmd,
     void *conf);
-static char *ngx_http_upstream_load_set_shm_size(ngx_conf_t *cf,
-    ngx_command_t *cmd, void *conf);
+//static char *ngx_http_upstream_load_set_shm_size(ngx_conf_t *cf,
+//    ngx_command_t *cmd, void *conf);
 static ngx_int_t ngx_http_upstream_load_init_module(ngx_cycle_t *cycle);
-static void *ngx_http_load_create_conf(ngx_conf_t *cf);
+static void *ngx_http_upstream_load_create_conf(ngx_conf_t *cf);
 
 #if (NGX_HTTP_EXTENDED_STATUS)
 static ngx_chain_t *ngx_http_upstream_load_report_status(ngx_http_request_t *r,
@@ -126,7 +128,7 @@ static ngx_http_module_t  ngx_http_upstream_load_module_ctx = {
     NULL,                                  /* create main configuration */
     NULL,                                  /* init main configuration */
 
-    ngx_http_load_create_conf,            /* create server configuration */
+    ngx_http_upstream_load_create_conf,            /* create server configuration */
     NULL,                                  /* merge server configuration */
 
     NULL,                                  /* create location configuration */
@@ -329,44 +331,44 @@ ngx_http_upstream_load_init_shm_zone(ngx_shm_zone_t *shm_zone, void *data)
 }
 
 
-static char *
-ngx_http_upstream_load_set_shm_size(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
-{
-    ssize_t                         new_shm_size;
-    ngx_str_t                      *value;
-
-    value = cf->args->elts;
-
-    new_shm_size = ngx_parse_size(&value[1]);
-    if (new_shm_size == NGX_ERROR) {
-        ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, "Invalid memory area size `%V'", &value[1]);
-        return NGX_CONF_ERROR;
-    }
-
-    new_shm_size = ngx_align(new_shm_size, ngx_pagesize);
-
-    if (new_shm_size < 8 * (ssize_t) ngx_pagesize) {
-        ngx_conf_log_error(NGX_LOG_WARN, cf, 0, "The upstream_load_shm_size value must be at least %udKiB", (8 * ngx_pagesize) >> 10);
-        new_shm_size = 8 * ngx_pagesize;
-    }
-
-    if (ngx_http_upstream_load_shm_size &&
-        ngx_http_upstream_load_shm_size != (ngx_uint_t) new_shm_size) {
-        ngx_conf_log_error(NGX_LOG_WARN, cf, 0, "Cannot change memory area size without restart, ignoring change");
-    } else {
-        ngx_http_upstream_load_shm_size = new_shm_size;
-    }
-    ngx_conf_log_error(NGX_LOG_DEBUG, cf, 0, "Using %udKiB of shared memory for upstream_load", new_shm_size >> 10);
-
-    return NGX_CONF_OK;
-}
+//static char *
+//ngx_http_upstream_load_set_shm_size(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
+//{
+//    ssize_t                         new_shm_size;
+//    ngx_str_t                      *value;
+//
+//    value = cf->args->elts;
+//
+//    new_shm_size = ngx_parse_size(&value[1]);
+//    if (new_shm_size == NGX_ERROR) {
+//        ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, "Invalid memory area size `%V'", &value[1]);
+//        return NGX_CONF_ERROR;
+//    }
+//
+//    new_shm_size = ngx_align(new_shm_size, ngx_pagesize);
+//
+//    if (new_shm_size < 8 * (ssize_t) ngx_pagesize) {
+//        ngx_conf_log_error(NGX_LOG_WARN, cf, 0, "The upstream_load_shm_size value must be at least %udKiB", (8 * ngx_pagesize) >> 10);
+//        new_shm_size = 8 * ngx_pagesize;
+//    }
+//
+//    if (ngx_http_upstream_load_shm_size &&
+//        ngx_http_upstream_load_shm_size != (ngx_uint_t) new_shm_size) {
+//        ngx_conf_log_error(NGX_LOG_WARN, cf, 0, "Cannot change memory area size without restart, ignoring change");
+//    } else {
+//        ngx_http_upstream_load_shm_size = new_shm_size;
+//    }
+//    ngx_conf_log_error(NGX_LOG_DEBUG, cf, 0, "Using %udKiB of shared memory for upstream_load", new_shm_size >> 10);
+//
+//    return NGX_CONF_OK;
+//}
 
 /*
  * alloc load configuration
  */
-static void *ngx_http_load_create_conf(ngx_conf_t *cf)
+static void *ngx_http_upstream_load_create_conf(ngx_conf_t *cf)
 {
-        ngx_http_load_srv_conf_t *conf = ngx_pcalloc(cf->pool, sizeof(ngx_http_load_srv_conf_t));
+        ngx_http_upstream_load_srv_conf_t *conf = ngx_pcalloc(cf->pool, sizeof(ngx_http_upstream_load_srv_conf_t));
         if (conf == NULL) {
                 return NGX_CONF_ERROR;
         }
@@ -378,7 +380,7 @@ static char *
 ngx_http_upstream_load(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 {
     ngx_http_upstream_srv_conf_t *uscf;
-    ngx_http_load_srv_conf_t     *load_conf;
+    ngx_http_upstream_load_srv_conf_t *load_conf;
 
     ngx_uint_t coef_cpu = 0;
     ngx_uint_t coef_memory = 0;
@@ -401,7 +403,7 @@ ngx_http_upstream_load(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
             }
 
             /* return what's after "cpu=" */
-            coef_cpu = ngx_atoi( (u_char *)(value[i].data + sizeof("cpu=") - 1), value[i].len - sizeof("cpu=")-1);
+            coef_cpu = ngx_atoi(&value[i].data[4], value[i].len - 4);
         }
 
         // Memory
@@ -414,7 +416,7 @@ ngx_http_upstream_load(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
             }
 
             /* return what's after "memory=" */
-            coef_memory = ngx_atoi( (u_char *)(value[i].data + sizeof("memory=") - 1), value[i].len - sizeof("memory=")-1);
+            coef_memory = ngx_atoi(&value[i].data[7], value[i].len - 7);
         }
 
         // TCP Active
@@ -427,7 +429,7 @@ ngx_http_upstream_load(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
             }
 
             /* return what's after "cpu=" */
-            coef_tcpactive = ngx_atoi( (u_char *)(value[i].data + sizeof("tcpactive=") - 1), value[i].len - sizeof("tcpactive=")-1);
+            coef_tcpactive = ngx_atoi(&value[i].data[10], value[i].len - 10);
         }
     }
 
@@ -450,7 +452,7 @@ ngx_http_upstream_load(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
     /*
      * ensure another upstream module has not been already loaded
      * peer.init_upstream is set to null and the upstream module use RR if not set
-     * But this check only works when the other module is declared before sticky
+     * But this check only works when the other module is declared before load
      */
     if (uscf->peer.init_upstream) {
         ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, "You can't use load with another upstream module");
@@ -648,6 +650,7 @@ ngx_http_upstream_init_load_rr(ngx_conf_t *cf, ngx_http_upstream_srv_conf_t *us)
 static ngx_int_t
 ngx_http_upstream_init_load(ngx_conf_t *cf, ngx_http_upstream_srv_conf_t *us)
 {
+    ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, "AAAAAAAAAAAAAAAAAAAAAAAAAAAA");
     ngx_uint_t                          n;
     ngx_http_upstream_load_peers_t     *peers;
     ngx_str_t                          *shm_name;
@@ -663,8 +666,14 @@ ngx_http_upstream_init_load(ngx_conf_t *cf, ngx_http_upstream_srv_conf_t *us)
         return NGX_ERROR;
     }
     peers = us->peer.data;
+
+    if (peers == NULL) {
+        ngx_log_error(NGX_LOG_EMERG, cf->log, 0, "[upstream_load] can't find any peers!");
+        return NGX_ERROR;
+    }
+
     n = peers->number;
-    
+
     shm_name = ngx_palloc(cf->pool, sizeof *shm_name);
     shm_name->len = sizeof("upstream_load");
     shm_name->data = (unsigned char *) "upstream_load";
@@ -675,9 +684,11 @@ ngx_http_upstream_init_load(ngx_conf_t *cf, ngx_http_upstream_srv_conf_t *us)
 
     ngx_http_upstream_load_shm_zone = ngx_shared_memory_add(
         cf, shm_name, ngx_http_upstream_load_shm_size, &ngx_http_upstream_load_module);
+
     if (ngx_http_upstream_load_shm_zone == NULL) {
         return NGX_ERROR;
     }
+
     ngx_http_upstream_load_shm_zone->init = ngx_http_upstream_load_init_shm_zone;
 
     peers->shared = NULL;
@@ -711,41 +722,146 @@ ngx_http_upstream_load_update_nreq(ngx_http_upstream_load_peer_data_t *ulpd, int
  */
 
 static ngx_int_t
+ngx_http_upstream_load_try_peer(ngx_peer_connection_t *pc,
+    ngx_http_upstream_load_peer_data_t *fp,
+    ngx_uint_t peer_id)
+{
+    ngx_http_upstream_load_peer_t        *peer;
+
+    if (ngx_bitvector_test(fp->tried, peer_id))
+        return NGX_BUSY;
+
+    peer = &fp->peers->peer[peer_id];
+
+    if (!peer->down) {
+        if (peer->max_fails == 0 || peer->shared->fails < peer->max_fails) {
+            return NGX_OK;
+        }
+
+        if (ngx_time() - peer->accessed > peer->fail_timeout) {
+            ngx_log_debug3(NGX_LOG_DEBUG_HTTP, pc->log, 0, "[upstream_load] resetting fail count for peer %d, time delta %d > %d",
+                peer_id, ngx_time() - peer->accessed, peer->fail_timeout);
+            peer->shared->fails = 0;
+            return NGX_OK;
+        }
+    }
+
+    return NGX_BUSY;
+}
+
+static ngx_int_t
+ngx_http_upstream_choose_load_peer_busy(ngx_peer_connection_t *pc,
+    ngx_http_upstream_load_peer_data_t *fp)
+{
+    ngx_uint_t                          i, n;
+    ngx_uint_t                          npeers = fp->peers->number;
+    //ngx_uint_t                          weight_mode = fp->peers->weight_mode;
+    ngx_uint_t                          best_idx = NGX_PEER_INVALID;
+    ngx_uint_t                          sched_score;
+    ngx_uint_t                          best_sched_score = ~0UL;
+
+    /*
+     * calculate sched scores for all the peers, choosing the lowest one
+     */
+    for (i = 0, n = fp->current; i < npeers; i++, n = (n + 1) % npeers) {
+        ngx_http_upstream_load_peer_t      *peer;
+        ngx_uint_t                          nreq;
+        ngx_uint_t                          weight;
+
+        peer = &fp->peers->peer[n];
+        nreq = fp->peers->peer[n].shared->nreq;
+
+        //if (weight_mode == WM_PEAK && nreq >= peer->weight) {
+        //    ngx_log_debug3(NGX_LOG_DEBUG_HTTP, pc->log, 0, "[upstream_load] backend %d has nreq %ui >= weight %ui in WM_PEAK mode", n, nreq, peer->weight);
+        //    continue;
+        //}
+
+        if (ngx_http_upstream_load_try_peer(pc, fp, n) != NGX_OK) {
+            if (!pc->tries) {
+                ngx_log_debug(NGX_LOG_DEBUG_HTTP, pc->log, 0, "[upstream_load] all backends exhausted");
+                return NGX_PEER_INVALID;
+            }
+
+            ngx_log_debug1(NGX_LOG_DEBUG_HTTP, pc->log, 0, "[upstream_load] backend %d already tried", n);
+            continue;
+        }
+
+        // FIXME
+        //sched_score = ngx_http_upstream_load_sched_score(pc, fp, n);
+
+        //if (weight_mode == WM_DEFAULT) {
+            /*
+             * take peer weight into account
+             */
+            weight = peer->shared->current_weight;
+            if (peer->max_fails) {
+                ngx_uint_t mf = peer->max_fails;
+                weight = peer->shared->current_weight * (mf - peer->shared->fails) / mf;
+            }
+            if (weight > 0) {
+                sched_score /= weight;
+            }
+            ngx_log_debug8(NGX_LOG_DEBUG_HTTP, pc->log, 0, "[upstream_load] bss = %ui, ss = %ui (n = %d, w = %d/%d, f = %d/%d, weight = %d)",
+                best_sched_score, sched_score, n, peer->shared->current_weight, peer->weight, peer->shared->fails, peer->max_fails, weight);
+        //}
+
+        if (sched_score <= best_sched_score) {
+            best_idx = n;
+            best_sched_score = sched_score;
+        }
+    }
+
+    return best_idx;
+}
+
+static ngx_int_t
 ngx_http_upstream_choose_load_peer(ngx_peer_connection_t *pc,
     ngx_http_upstream_load_peer_data_t *ulpd, ngx_uint_t *peer_id)
 {
-    //ngx_uint_t                          npeers;
-    //ngx_uint_t                          best_idx = NGX_PEER_INVALID;
+    ngx_uint_t                          npeers;
+    ngx_uint_t                          best_idx = NGX_PEER_INVALID;
+    //ngx_uint_t                          weight_mode;
 
-    //npeers = ulpd->peers->number;
-    //
-    ///* just a single backend */
-    //if (npeers == 1) {
-    //    *peer_id = 0;
-    //    return NGX_OK;
-    //}
-    //
-    //
-    //
-    //
-    //best_idx = ;
-    //if (best_idx != NGX_PEER_INVALID) {
-    //    goto chosen;
-    //}
-    //
-    //return NGX_BUSY;
-    //
-    //chosen:
-    //ngx_log_debug1(NGX_LOG_DEBUG_HTTP, pc->log, 0, "[upstream_load] chose peer %i", best_idx);
-    //*peer_id = best_idx;
-    //ngx_bitvector_set(fp->tried, best_idx);
+    npeers = ulpd->peers->number;
+    //weight_mode = ulpd->peers->weight_mode;
 
+    /* just a single backend */
+    if (npeers == 1) {
+        *peer_id = 0;
+        ngx_log_debug1(NGX_LOG_DEBUG_HTTP, pc->log, 0, "[upstream_load] chose the only peer available (peer %i)", best_idx);
+        return NGX_OK;
+    }
+
+    /* choose the least loaded one */
+    best_idx = ngx_http_upstream_choose_load_peer_busy(pc, ulpd);
+    if (best_idx != NGX_PEER_INVALID) {
+        goto chosen;
+    }
+
+    return NGX_BUSY;
+
+chosen:
+    ngx_log_debug1(NGX_LOG_DEBUG_HTTP, pc->log, 0, "[upstream_load] chose peer %i", best_idx);
+    *peer_id = best_idx;
+    ngx_bitvector_set(ulpd->tried, best_idx);
+
+    // we only support one weight mode, so no need to check evaluate what mode we are using
+    // TODO clean up these comments
+    //if (weight_mode == WM_DEFAULT) {
+        ngx_http_upstream_load_peer_t      *peer = &ulpd->peers->peer[best_idx];
+
+        if (peer->shared->current_weight-- == 0) {
+            peer->shared->current_weight = peer->weight;
+            ngx_log_debug2(NGX_LOG_DEBUG_HTTP, pc->log, 0, "[upstream_load] peer %d expired weight, reset to %d", best_idx, peer->weight);
+        }
+    //}
     return NGX_OK;
 }
 
 ngx_int_t
 ngx_http_upstream_get_load_peer(ngx_peer_connection_t *pc, void *data)
 {
+    ngx_log_error(NGX_LOG_ERR, pc->log, 0, "DENTRO DO ngx_http_upstream_get_load_peer");
     ngx_int_t                           ret;
     ngx_uint_t                          peer_id, i;
     ngx_http_upstream_load_peer_data_t *ulpd = data;
@@ -772,12 +888,19 @@ ngx_http_upstream_get_load_peer(ngx_peer_connection_t *pc, void *data)
         pc->name = ulpd->peers->name;
         ulpd->current = NGX_PEER_INVALID;
         ngx_spinlock_unlock(lock);
+    ngx_log_error(NGX_LOG_ERR, pc->log, 0, "A SAIR DO 2 ngx_http_upstream_get_load_peer");
         return NGX_BUSY;
     }
 
     /* assert(ret == NGX_OK); */
     peer = &ulpd->peers->peer[peer_id];
     ulpd->current = peer_id;
+
+    // we are using round-robin so there is no need to check whether we are using it or not
+    // TODO clean up these comments
+    //if (!fp->peers->no_rr) {
+        ulpd->peers->current = peer_id;
+    //}
 
     pc->sockaddr = peer->sockaddr;
     pc->socklen = peer->socklen;
@@ -787,6 +910,7 @@ ngx_http_upstream_get_load_peer(ngx_peer_connection_t *pc, void *data)
     ngx_http_upstream_load_update_nreq(ulpd, 1, pc->log);
     peer->shared->total_req++;
     ngx_spinlock_unlock(lock);
+    ngx_log_error(NGX_LOG_ERR, pc->log, 0, "A SAIR DO ngx_http_upstream_get_load_peer");
     return ret;
 }
 
@@ -807,10 +931,11 @@ ngx_http_upstream_free_load_peer(ngx_peer_connection_t *pc, void *data,
 
     lock = &ulpd->peers->shared->lock;
     ngx_spinlock(lock, ngx_pid, 1024);
-    if (!ngx_bitvector_test(ulpd->done, ulpd->current)) {
-        ngx_bitvector_set(ulpd->done, ulpd->current);
+    // FIXME don't get this... what does it do? :-S
+    //if (!ngx_bitvector_test(ulpd->done, ulpd->current)) {
+    //    ngx_bitvector_set(ulpd->done, ulpd->current);
         ngx_http_upstream_load_update_nreq(ulpd, -1, pc->log);
-    }
+    //}
 
     if (ulpd->peers->number == 1) {
         pc->tries = 0;
@@ -947,6 +1072,8 @@ ngx_int_t
 ngx_http_upstream_init_load_peer(ngx_http_request_t *r,
     ngx_http_upstream_srv_conf_t *us)
 {
+    ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "DENTRO DO ngx_http_upstream_init_load_peer");
+
     ngx_http_upstream_load_peer_data_t     *ulpd;
     ngx_http_upstream_load_peers_t         *ulp;
     ngx_uint_t                              n;
@@ -965,11 +1092,15 @@ ngx_http_upstream_init_load_peer(ngx_http_request_t *r,
     ulp = us->peer.data;
 
     ulpd->tried = ngx_bitvector_alloc(r->pool, ulp->number, &ulpd->data);
-    ulpd->done = ngx_bitvector_alloc(r->pool, ulp->number, &ulpd->data2);
+    //ulpd->done = ngx_bitvector_alloc(r->pool, ulp->number, &ulpd->data2);
 
-    if (ulpd->tried == NULL || ulpd->done == NULL) {
+    //if (ulpd->tried == NULL || ulpd->done == NULL) {
+    if (ulpd->tried == NULL) {
         return NGX_ERROR;
     }
+
+    /* set up shared memory area */
+    ngx_http_upstream_load_shm_alloc(ulp, r->connection->log);
 
     ulpd->current = ulp->current;
     ulpd->peers = ulp;
@@ -990,6 +1121,7 @@ ngx_http_upstream_init_load_peer(ngx_http_request_t *r,
                                ngx_http_upstream_load_save_session;
 #endif
 
+    ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "A SAIR DO ngx_http_upstream_init_load_peer");
     return NGX_OK;
 }
 
