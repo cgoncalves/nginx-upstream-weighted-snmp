@@ -208,7 +208,7 @@ void ngx_http_upstream_load_monitor(ngx_event_t *ev)
         return;
     }
 
-    ngx_log_stderr(0, "[MONITOR] CPU=%d", load_conf->coef_cpu);
+    ngx_log_stderr(0, "[MONITOR] PERIODICITY=%d", load_conf->periodicity);
 
     server_threads = malloc(peers->number * sizeof (pthread_t));
 
@@ -781,7 +781,6 @@ ngx_http_upstream_init_load_rr(ngx_conf_t *cf, ngx_http_upstream_srv_conf_t *us)
 static ngx_int_t
 ngx_http_upstream_init_load(ngx_conf_t *cf, ngx_http_upstream_srv_conf_t *us)
 {
-    ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, "AAAAAAAAAAAAAAAAAAAAAAAAAAAA");
     ngx_uint_t                          n;
     ngx_http_upstream_load_peers_t     *peers;
     ngx_str_t                          *shm_name;
@@ -932,7 +931,7 @@ ngx_http_upstream_choose_load_peer_busy(ngx_peer_connection_t *pc,
 
             sched_score = weight;
 
-ngx_log_debug8(NGX_LOG_DEBUG_HTTP, pc->log, 0, "[upstream_load] SCORE OF PEER ID %i IS %i", n, sched_score);
+            ngx_log_debug8(NGX_LOG_DEBUG_HTTP, pc->log, 0, "[upstream_load] SCORE OF PEER ID %i IS %i", n, sched_score);
 
         //}
             //if (weight > 0) {
@@ -1567,6 +1566,7 @@ ngx_uint_t http_port_open(char *name) {
 
     fp = exec_wget(name);
 
+
     while (fgets(output, sizeof (output) - 1, fp) != NULL) {
         counter++;
         if(counter == 2 && strstr(output, "Connecting") != NULL && strstr(output, "connected") != NULL) {
@@ -1648,9 +1648,9 @@ void getMetrics(ngx_http_upstream_load_peer_t *peer) {
 
 FILE *exec_wget(char *name) {
 
-    u_char command[1024];
+    u_char command[512];
 
-    ngx_sprintf(command, "wget -O - %s 2>&1", name);
+    ngx_sprintf(command, "wget -O - %s  2>&1", name);
     ngx_log_stderr(0, "COMMAND = %s", command);
 
     return exec_command(command);
@@ -1658,9 +1658,10 @@ FILE *exec_wget(char *name) {
 
 FILE *exec_snmp(char *type, ngx_int_t version, char *community, char *name, char *OID) {
 
-    u_char command[1024];
+    u_char command[512];
 
     ngx_sprintf(command, "snmp%s -O enU -v %d -c %s %s %s", type, version, community, name, OID);
+    ngx_log_stderr(0, "COMMAND = %s", command);
 
     return exec_command(command);
 }
