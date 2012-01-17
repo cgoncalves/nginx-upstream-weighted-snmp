@@ -134,10 +134,10 @@ static ngx_int_t   ngx_http_upstream_worker_init(ngx_cycle_t *);
 
 void *server_run(void *arg);
 void determineNewWeights(ngx_uint_t num_peers, ngx_http_upstream_load_peers_t *peers);
-ngx_uint_t http_port_open(ngx_str_t name);
+ngx_uint_t http_port_open(char *);
 void getMetrics(ngx_http_upstream_load_peer_t *peer);
-FILE *exec_wget(ngx_str_t name);
-FILE *exec_snmp(char *type, ngx_int_t version, char *community, ngx_str_t name, char *OID);
+FILE *exec_wget(char *name);
+FILE *exec_snmp(char *type, ngx_int_t version, char *community, char *name, char *OID);
 FILE *exec_command(u_char *command);
 
 static ngx_command_t  ngx_http_upstream_load_commands[] = {
@@ -214,6 +214,11 @@ void ngx_http_upstream_load_monitor(ngx_event_t *ev)
 
     for (i = 0; i < peers->number; i++) {
         ngx_log_stderr(0, "Thread %d", i);
+        ngx_log_stderr(0, "CURRENT PEER ID = %i", peers->current);
+        ngx_log_stderr(0, "NUMBER OF PEERS = %i", peers->number);
+
+        ngx_log_stderr(0, "PEER WEIGHT = %i", peers->peer[i].weight);
+        ngx_log_stderr(0, "PEER FAILS = %i", peers->peer[i].max_fails);
         int ret = pthread_create(&server_threads[i], NULL, server_run, (void*) &peers->peer[i]);
 
         ngx_log_stderr(0, "Thread %d ret = %d", i, ret);
@@ -924,14 +929,21 @@ ngx_http_upstream_choose_load_peer_busy(ngx_peer_connection_t *pc,
                 ngx_uint_t mf = peer->max_fails;
                 weight = peer->shared->current_weight * (mf - peer->shared->fails) / mf;
             }
-            if (weight > 0) {
-                sched_score /= weight;
-            }
+
+            sched_score = weight;
+
+ngx_log_debug8(NGX_LOG_DEBUG_HTTP, pc->log, 0, "[upstream_load] SCORE OF PEER ID %i IS %i", n, sched_score);
+
+        //}
+            //if (weight > 0) {
+            //    sched_score /= weight;
+            //}
             ngx_log_debug8(NGX_LOG_DEBUG_HTTP, pc->log, 0, "[upstream_load] bss = %ui, ss = %ui (n = %d, w = %d/%d, f = %d/%d, weight = %d)",
                 best_sched_score, sched_score, n, peer->shared->current_weight, peer->weight, peer->shared->fails, peer->max_fails, weight);
         //}
 
-        if (sched_score <= best_sched_score) {
+        //if (sched_score <= best_sched_score) {
+        if (sched_score > best_sched_score) {
             best_idx = n;
             best_sched_score = sched_score;
         }
@@ -960,6 +972,7 @@ ngx_http_upstream_choose_load_peer(ngx_peer_connection_t *pc,
 
     /* choose the least loaded one */
     best_idx = ngx_http_upstream_choose_load_peer_busy(pc, ulpd);
+    ngx_log_debug1(NGX_LOG_DEBUG_HTTP, pc->log, 0, "[upstream_load] choosen one is peer id %i", best_idx);
     if (best_idx != NGX_PEER_INVALID) {
         goto chosen;
     }
@@ -1459,18 +1472,24 @@ ngx_http_upstream_load_report_status(ngx_http_request_t *r, ngx_int_t *length)
 
 void *server_run(void *arg) {
 
-        ngx_log_stderr(0, "Inside Thread");
-    
-   	ngx_http_upstream_load_peer_t *peer = (ngx_http_upstream_load_peer_t *) arg;    
-/*
-    if(http_port_open(peer->name))
+    ngx_log_stderr(0, "Inside Thread");
+
+    ngx_http_upstream_load_peer_t *peer = (ngx_http_upstream_load_peer_t *) arg;
+    char *name = inet_ntoa( ((struct sockaddr_in*)(peer->sockaddr))->sin_addr);
+
+    ngx_log_stderr(0, "DENTRO DA THREAD: PEER WEIGHT = %d", peer->weight);
+    ngx_log_stderr(0, "DENTRO DA THREAD: NAME = %s", peer->name.data);
+    //ngx_log_stderr(0, "DENTRO DA THREAD: SOCK ADDR = %s", inet_ntoa(((struct sockaddr_in*)&peer->sockaddr->sin_addr)));
+    ngx_log_stderr(0, "DENTRO DA THREAD: SOCK ADDR = %s", name);
+
+    if(http_port_open(name))
     {
         if(peer->down == 1)
           peer->down = 0;
 
         getMetrics(peer);
 
-        ngx_log_stderr(0, "Server %s metrics (CPU, Memory, Connections) = %d, %d, %d", peer->name, peer->metrics.cpu_free, peer->metrics.mem_free, peer->metrics.connections);
+        ngx_log_stderr(0, "Server %s metrics (CPU, Memory, Connections) = %d, %d, %d", name, peer->metrics.cpu_free, peer->metrics.mem_free, peer->metrics.connections);
 
         if (peer->metrics.cpu_free == NGX_ERROR)
             peer->metrics.cpu_free = 0;
@@ -1483,7 +1502,7 @@ void *server_run(void *arg) {
         if(peer->down == 0)
           peer->down = 1;
     }
-*/
+
     return NULL;
 }
 
@@ -1512,7 +1531,8 @@ void determineNewWeights(ngx_uint_t num_peers, ngx_http_upstream_load_peers_t *p
 
         peers->peer[i].weight = (int) ((double) (load_conf->coef_cpu * peers->peer[i].metrics.cpu_free + load_conf->coef_memory * peers->peer[i].metrics.mem_free + load_conf->coef_connections * peers->peer[i].metrics.connections) + 0.5);
 
-        ngx_log_stderr(0, "Server %s determined weight = %d", peers->peer[i].name, peers->peer[i].weight);
+        char *name = inet_ntoa( ((struct sockaddr_in*)(peers->peer[i].sockaddr))->sin_addr);
+        ngx_log_stderr(0, "Server %s determined weight = %d", name, peers->peer[i].weight);
 
         if((peers->peer[i].weight > 0) && (peers->peer[i].weight < min))
           min = peers->peer[i].weight;
@@ -1535,11 +1555,12 @@ void determineNewWeights(ngx_uint_t num_peers, ngx_http_upstream_load_peers_t *p
         
         peers->peer[i].old_weight = peers->peer[i].weight;
 
-        ngx_log_stderr(0, "Server %s new weight = %d", peers->peer[i].name, peers->peer[i].weight);
+        char *name = inet_ntoa( ((struct sockaddr_in*)(peers->peer[i].sockaddr))->sin_addr);
+        ngx_log_stderr(0, "Server %s new weight = %d", name, peers->peer[i].weight);
     }
 }
 
-ngx_uint_t http_port_open(ngx_str_t name) {
+ngx_uint_t http_port_open(char *name) {
     FILE *fp;
     char output[1024];
     ngx_uint_t counter = 0;
@@ -1566,10 +1587,11 @@ void getMetrics(ngx_http_upstream_load_peer_t *peer) {
     ngx_uint_t counter = 0;
     char *result = NULL, *res=NULL;
     ngx_int_t cpu_free = NGX_ERROR, mem_free = NGX_ERROR, mem_total = NGX_ERROR, connections = NGX_ERROR;
+    char *name = inet_ntoa( ((struct sockaddr_in*)(peer->sockaddr))->sin_addr);
 
     /* Free CPU percentage */
 
-    fp = exec_snmp("walk", 1, "public", peer->name, "1.3.6.1.2.1.25.3.3.1.2");
+    fp = exec_snmp("walk", 1, "public", name, "1.3.6.1.2.1.25.3.3.1.2");
 
     while (fgets(output, sizeof (output) - 1, fp) != NULL) {
         if (strstr(output, "Timeout") == NULL) {
@@ -1596,7 +1618,7 @@ void getMetrics(ngx_http_upstream_load_peer_t *peer) {
 
     /* Free Memory percentage, established TCP connections */
 
-    fp = exec_snmp("get", 1, "public", peer->name, "1.3.6.1.4.1.2021.4.11.0 1.3.6.1.4.1.2021.4.5.0 1.3.6.1.2.1.6.9.0");
+    fp = exec_snmp("get", 1, "public", name, "1.3.6.1.4.1.2021.4.11.0 1.3.6.1.4.1.2021.4.5.0 1.3.6.1.2.1.6.9.0");
 
     while (fgets(output, sizeof (output) - 1, fp) != NULL) {
         if (strstr(output, "Timeout") == NULL) {
@@ -1624,16 +1646,17 @@ void getMetrics(ngx_http_upstream_load_peer_t *peer) {
     peer->metrics.connections = connections;
 }
 
-FILE *exec_wget(ngx_str_t name) {
+FILE *exec_wget(char *name) {
 
     u_char command[1024];
 
     ngx_sprintf(command, "wget -O - %s 2>&1", name);
+    ngx_log_stderr(0, "COMMAND = %s", command);
 
     return exec_command(command);
 }
 
-FILE *exec_snmp(char *type, ngx_int_t version, char *community, ngx_str_t name, char *OID) {
+FILE *exec_snmp(char *type, ngx_int_t version, char *community, char *name, char *OID) {
 
     u_char command[1024];
 
