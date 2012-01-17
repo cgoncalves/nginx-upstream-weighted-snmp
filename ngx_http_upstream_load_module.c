@@ -68,8 +68,8 @@ typedef struct {
     //ngx_http_upstream_rr_peer_data_t   rrp;
     ngx_uint_t                         coef_cpu;
     ngx_uint_t                         coef_memory;
-    ngx_uint_t                         coef_tcpactive;
-    //ngx_http_upstream_srv_conf_t        uscf;
+    ngx_uint_t                         coef_connections;
+    ngx_http_upstream_srv_conf_t       *uscf;
 } ngx_http_upstream_load_srv_conf_t;
 
 typedef struct {
@@ -96,6 +96,7 @@ static char *ngx_http_upstream_load(ngx_conf_t *cf, ngx_command_t *cmd,
 //    ngx_command_t *cmd, void *conf);
 static ngx_int_t ngx_http_upstream_load_init_module(ngx_cycle_t *cycle);
 static void *ngx_http_upstream_load_create_conf(ngx_conf_t *cf);
+//static ngx_int_t ngx_http_upstream_load_metrics(ngx_cycle_t *cycle);
 
 #if (NGX_HTTP_EXTENDED_STATUS)
 static ngx_chain_t *ngx_http_upstream_load_report_status(ngx_http_request_t *r,
@@ -108,6 +109,9 @@ static ngx_int_t ngx_http_upstream_load_set_session(ngx_peer_connection_t *pc,
 static void ngx_http_upstream_load_save_session(ngx_peer_connection_t *pc,
     void *data);
 #endif
+
+void ngx_supervisord_monitor(ngx_event_t *);
+ngx_int_t   ngx_supervisord_worker_init(ngx_cycle_t *);
 
 static ngx_command_t  ngx_http_upstream_load_commands[] = {
 
@@ -128,7 +132,7 @@ static ngx_http_module_t  ngx_http_upstream_load_module_ctx = {
     NULL,                                  /* create main configuration */
     NULL,                                  /* init main configuration */
 
-    ngx_http_upstream_load_create_conf,            /* create server configuration */
+    ngx_http_upstream_load_create_conf,    /* create server configuration */
     NULL,                                  /* merge server configuration */
 
     NULL,                                  /* create location configuration */
@@ -141,12 +145,12 @@ static ngx_http_module_t  ngx_http_upstream_load_module_ctx = {
 
 ngx_module_t  ngx_http_upstream_load_module = {
     NGX_MODULE_V1,
-    &ngx_http_upstream_load_module_ctx, /* module context */
-    ngx_http_upstream_load_commands,    /* module directives */
+    &ngx_http_upstream_load_module_ctx,    /* module context */
+    ngx_http_upstream_load_commands,       /* module directives */
     NGX_HTTP_MODULE,                       /* module type */
     NULL,                                  /* init master */
     ngx_http_upstream_load_init_module,    /* init module */
-    NULL,                                  /* init process */
+    ngx_supervisord_worker_init,           /* init process */
     NULL,                                  /* init thread */
     NULL,                                  /* exit thread */
     NULL,                                  /* exit process */
@@ -159,6 +163,80 @@ static ngx_uint_t ngx_http_upstream_load_shm_size;
 static ngx_shm_zone_t * ngx_http_upstream_load_shm_zone;
 static ngx_rbtree_t * ngx_http_upstream_load_rbtree;
 static ngx_uint_t ngx_http_upstream_load_generation;
+ngx_event_t  *ngx_supervisord_timer;
+static ngx_http_upstream_load_srv_conf_t *ngx_http_upstream_srv_conf_ptr;
+
+void ngx_supervisord_monitor(ngx_event_t *ev)
+{
+    ngx_log_stderr(0, "A CORRER O MONITOR!!!!!!!!!!!!");
+    ngx_http_upstream_load_srv_conf_t *load_conf = ngx_http_upstream_srv_conf_ptr;
+    ngx_log_stderr(0, "[MONITOR] CPU=%d", load_conf->coef_cpu);
+    FILE *fp;
+    time_t now;
+
+    time(&now);
+    fp = fopen("/tmp/CURRENT_DATE.txt","w"); /* open for writing */
+    fprintf(fp,"%.24s\n", ctime(&now));
+    fclose(fp); /* close the file before ending program */
+
+    ngx_add_timer(ev, 1000);
+
+
+    //ngx_connection_t             *dummy = ev->data;
+    //ngx_array_t                  *upstreams = dummy->data;
+    //ngx_supervisord_srv_conf_t  **supcfp;
+    //ngx_uint_t                    i;
+
+    //if (ngx_exiting) {
+    //    return;
+    //}
+
+    //supcfp = upstreams->elts;
+    //for (i = 0; i < upstreams->nelts; i++) {
+    //    ngx_supervisord_sync_servers(supcfp[i]);
+
+    //    supcfp[i]->load_skip = ++supcfp[i]->load_skip
+    //        % NGX_SUPERVISORD_LOAD_SKIP;
+    //    if (supcfp[i]->load_skip == 0) {
+    //        ngx_supervisord_sync_load(supcfp[i]);
+    //    }
+    //}
+
+    //ngx_add_timer(ev, NGX_SUPERVISORD_MONITOR_INTERVAL);
+}
+
+ngx_int_t ngx_supervisord_worker_init(ngx_cycle_t *cycle)
+{
+    ngx_connection_t  *dummy;
+    ngx_pool_t  *pool;
+    ngx_log_t   *log;
+    ngx_http_upstream_load_srv_conf_t *load_conf;
+
+    load_conf = ngx_http_upstream_srv_conf_ptr;
+
+    log = cycle->log;
+
+    pool = ngx_create_pool(NGX_CYCLE_POOL_SIZE, log);
+    if (pool == NULL) {
+        return NGX_ERROR;
+    }
+
+    dummy = ngx_pcalloc(pool, sizeof(ngx_connection_t));
+    if (dummy == NULL) {
+        return NGX_ERROR;
+    }
+
+    ngx_supervisord_timer->log = ngx_cycle->log;
+    ngx_supervisord_timer->data = dummy;
+    ngx_supervisord_timer->handler = ngx_supervisord_monitor;
+
+    ngx_log_stderr(0, "CPU=%d, MEMORY=%d, TCPACTIVE=%d", load_conf->coef_cpu, load_conf->coef_memory, load_conf->coef_connections);
+
+    ngx_add_timer(ngx_supervisord_timer, 1000); // 1 second
+
+
+    return NGX_OK;
+}
 
 static int
 ngx_http_upstream_load_compare_rbtree_node(const ngx_rbtree_node_t *v_left,
@@ -284,7 +362,8 @@ ngx_bitvector_set(uintptr_t *bv, ngx_uint_t bit)
 static ngx_int_t
 ngx_http_upstream_load_init_module(ngx_cycle_t *cycle)
 {
-    ngx_http_upstream_load_generation++;   
+    ngx_http_upstream_load_generation++;
+
     return NGX_OK;
 }
 
@@ -373,6 +452,11 @@ static void *ngx_http_upstream_load_create_conf(ngx_conf_t *cf)
                 return NGX_CONF_ERROR;
         }
 
+        ngx_supervisord_timer = ngx_pcalloc(cf->pool, sizeof(ngx_event_t));
+        if (ngx_supervisord_timer == NULL) {
+            return NGX_CONF_ERROR;
+        }
+
         return conf;
 }
 
@@ -384,7 +468,7 @@ ngx_http_upstream_load(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 
     ngx_uint_t coef_cpu = 0;
     ngx_uint_t coef_memory = 0;
-    ngx_uint_t coef_tcpactive = 0;
+    ngx_uint_t coef_connections = 0;
 
     ngx_uint_t i;
     ngx_uint_t aux;
@@ -420,20 +504,20 @@ ngx_http_upstream_load(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
         }
 
         // TCP Active
-        if ((u_char *)ngx_strstr(value[i].data, "tcpactive=") == value[i].data) {
+        if ((u_char *)ngx_strstr(value[i].data, "connections=") == value[i].data) {
 
             /* do we have at least on char after "arg=" ? */
-            if (value[i].len <= sizeof("tcpactive=") - 1) {
-                ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, "a value must be provided to \"tcpactive=\"");
+            if (value[i].len <= sizeof("connections=") - 1) {
+                ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, "a value must be provided to \"connections=\"");
                 return NGX_CONF_ERROR;
             }
 
             /* return what's after "cpu=" */
-            coef_tcpactive = ngx_atoi(&value[i].data[10], value[i].len - 10);
+            coef_connections = ngx_atoi(&value[i].data[12], value[i].len - 12);
         }
     }
 
-    aux = coef_cpu + coef_memory + coef_tcpactive;
+    aux = coef_cpu + coef_memory + coef_connections;
 
     // if the sum of all coeficients isn't equal to 100%, return an error
     if (aux != 100) {
@@ -441,13 +525,16 @@ ngx_http_upstream_load(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
         return NGX_CONF_ERROR;
     }
 
+    uscf = ngx_http_conf_get_module_srv_conf(cf, ngx_http_upstream_module);
+
     /* save the load parameters */
     load_conf = ngx_http_conf_get_module_srv_conf(cf, ngx_http_upstream_load_module);
     load_conf->coef_cpu = coef_cpu;
     load_conf->coef_memory = coef_memory;
-    load_conf->coef_tcpactive = coef_tcpactive;
+    load_conf->coef_connections = coef_connections;
+    load_conf->uscf = uscf;
 
-    uscf = ngx_http_conf_get_module_srv_conf(cf, ngx_http_upstream_module);
+    ngx_http_upstream_srv_conf_ptr = load_conf;
 
     /*
      * ensure another upstream module has not been already loaded
