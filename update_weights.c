@@ -19,7 +19,6 @@ typedef struct {
 
 typedef struct {
     const char *name;
-    const char *community;
     Metrics metrics;
     unsigned int old_weight;
     unsigned int weight;
@@ -62,11 +61,9 @@ int main(int argc, char **argv)
     coefs->connections = 0.2;
 
     servers = (Host *) malloc(tinfo->num_servers * sizeof(Host));
-    servers[0].name = "192.168.56.102";
-    servers[0].community = "public";  
+    servers[0].name = "192.168.56.102";  
     servers[0].old_weight = 1;  
     servers[1].name = "192.168.56.103";
-    servers[1].community = "public";
     servers[1].old_weight = 1;
 
     ret = pthread_create(&thread, NULL, run, (void*) tinfo);
@@ -189,7 +186,7 @@ void determineNewWeights(int num_servers) {
           servers[i].weight = (int) ((double) servers[i].weight / 2 + 0.5);
         }
         else
-          servers[i].weight = 0;
+          servers[i].weight = servers[i].old_weight;
 
         if(servers[i].up && servers[i].weight == 0)
           servers[i].weight = 1;
@@ -230,7 +227,7 @@ void getMetrics(int id) {
 
     /* Free CPU percentage */
 
-    fp = exec_snmp("walk", 1, servers[id].community, servers[id].name, "1.3.6.1.2.1.25.3.3.1.2");
+    fp = exec_snmp("walk", 1, "public", servers[id].name, "1.3.6.1.2.1.25.3.3.1.2");
 
     while (fgets(output, sizeof (output) - 1, fp) != NULL) {
         if (strstr(output, "Timeout") == NULL) {
@@ -256,7 +253,7 @@ void getMetrics(int id) {
     servers[id].metrics.cpu_free = cpu_free;
 
     /* Free Memory percentage, established TCP connections */
-    fp = exec_snmp("get", 1, servers[id].community, servers[id].name, "1.3.6.1.4.1.2021.4.11.0 1.3.6.1.4.1.2021.4.5.0 1.3.6.1.2.1.6.9.0");
+    fp = exec_snmp("get", 1, "public", servers[id].name, "1.3.6.1.4.1.2021.4.11.0 1.3.6.1.4.1.2021.4.5.0 1.3.6.1.2.1.6.9.0");
 
     while (fgets(output, sizeof (output) - 1, fp) != NULL) {
         if (strstr(output, "Timeout") == NULL) {
