@@ -38,9 +38,9 @@ typedef struct {
 #define ngx_spinlock_unlock(lock)       (void) ngx_atomic_cmp_set(lock, ngx_pid, 0)
 
 typedef struct {
-    ngx_uint_t cpu_free;
-    ngx_uint_t mem_free;
-    ngx_uint_t connections;
+    ngx_int_t cpu_free;
+    ngx_int_t mem_free;
+    ngx_int_t connections;
 } Metrics;
 
 typedef struct {
@@ -49,8 +49,8 @@ typedef struct {
     socklen_t                           socklen;
     ngx_str_t                           name;
 
-    ngx_uint_t                          weight;
-    ngx_uint_t                          old_weight;
+    ngx_int_t                          weight;
+    ngx_int_t                          old_weight;
     Metrics                             metrics;
 
     ngx_uint_t                          max_fails;
@@ -133,11 +133,12 @@ static void ngx_http_upstream_load_monitor(ngx_event_t *);
 static ngx_int_t   ngx_http_upstream_worker_init(ngx_cycle_t *);
 
 void *server_run(void *arg);
-void determineNewWeights(int num_peers, ngx_http_upstream_load_peers_t *peers);
+void determineNewWeights(ngx_uint_t num_peers, ngx_http_upstream_load_peers_t *peers);
+ngx_uint_t http_port_open(ngx_str_t name);
 void getMetrics(ngx_http_upstream_load_peer_t *peer);
-FILE *exec_wget(const char *name);
-FILE *exec_snmp(char *type, int version, const char *community, const char *name, char *OID);
-FILE *exec_command(char *command);
+FILE *exec_wget(ngx_str_t name);
+FILE *exec_snmp(char *type, ngx_int_t version, char *community, ngx_str_t name, char *OID);
+FILE *exec_command(u_char *command);
 
 static ngx_command_t  ngx_http_upstream_load_commands[] = {
 
@@ -201,7 +202,7 @@ void ngx_http_upstream_load_monitor(ngx_event_t *ev)
     ngx_http_upstream_load_peers_t    *peers;
 
     uscf = load_conf->uscf;
-    peers = uscf->peer.data->peers;
+    peers = uscf->peer.data;
 
     if (ngx_exiting) {
         return;
@@ -213,7 +214,9 @@ void ngx_http_upstream_load_monitor(ngx_event_t *ev)
 
     for (i = 0; i < peers->number; i++) {
         ngx_log_stderr(0, "Thread %d", i);
-        pthread_create(&server_threads[i], NULL, server_run, (void*) &(peers->peer[i]));
+        int ret = pthread_create(&server_threads[i], NULL, server_run, (void*) &peers->peer[i]);
+
+        ngx_log_stderr(0, "Thread %d ret = %d", i, ret);
     }
 
     for (i = 0; i < peers->number; i++) {
@@ -1456,11 +1459,10 @@ ngx_http_upstream_load_report_status(ngx_http_request_t *r, ngx_int_t *length)
 
 void *server_run(void *arg) {
 
-    ngx_http_upstream_load_peer_t *peer = (ngx_http_upstream_load_peer_t *) arg;
-    ngx_int_t cpu_free, num_conn, mem_free;
-    ngx_uint_t version = 1, id;
-    ngx_uint_t weight = 0;
-
+        ngx_log_stderr(0, "Inside Thread");
+    
+   	ngx_http_upstream_load_peer_t *peer = (ngx_http_upstream_load_peer_t *) arg;    
+/*
     if(http_port_open(peer->name))
     {
         if(peer->down == 1)
@@ -1481,14 +1483,14 @@ void *server_run(void *arg) {
         if(peer->down == 0)
           peer->down = 1;
     }
-
-    printf("Thread Server %s ended!\n", peer->name);
+*/
+    return NULL;
 }
 
-void determineNewWeights(int num_peers, ngx_http_upstream_load_peers_t *peers) {
+void determineNewWeights(ngx_uint_t num_peers, ngx_http_upstream_load_peers_t *peers) {
 
     ngx_http_upstream_load_srv_conf_t *load_conf = ngx_http_upstream_srv_conf_ptr;
-    ngx_uint_t                         min, max;
+    ngx_int_t                          min, max;
     ngx_uint_t                         i;
 
 
@@ -1537,9 +1539,9 @@ void determineNewWeights(int num_peers, ngx_http_upstream_load_peers_t *peers) {
     }
 }
 
-ngx_uint_t http_port_open(const char *name) {
+ngx_uint_t http_port_open(ngx_str_t name) {
     FILE *fp;
-    char output[1024], *result;
+    char output[1024];
     ngx_uint_t counter = 0;
 
     fp = exec_wget(name);
@@ -1560,9 +1562,9 @@ ngx_uint_t http_port_open(const char *name) {
 
 void getMetrics(ngx_http_upstream_load_peer_t *peer) {
     FILE *fp;
-    char output[1024], OIDs[1024];
+    char output[1024];
     ngx_uint_t counter = 0;
-    char *result = NULL, *res;
+    char *result = NULL, *res=NULL;
     ngx_int_t cpu_free = NGX_ERROR, mem_free = NGX_ERROR, mem_total = NGX_ERROR, connections = NGX_ERROR;
 
     /* Free CPU percentage */
@@ -1622,33 +1624,31 @@ void getMetrics(ngx_http_upstream_load_peer_t *peer) {
     peer->metrics.connections = connections;
 }
 
-FILE *exec_wget(const char *name) {
+FILE *exec_wget(ngx_str_t name) {
 
-    char command[1024];
+    u_char command[1024];
 
-    sprintf(command, "wget -O - %s 2>&1", name);
-
-    return exec_command(command);
-}
-
-FILE *exec_snmp(char *type, int version, const char *community, const char *name, char *OID) {
-
-    char command[1024];
-
-    sprintf(command, "snmp%s -O enU -v %d -c %s %s %s", type, version, community, name, OID);
+    ngx_sprintf(command, "wget -O - %s 2>&1", name);
 
     return exec_command(command);
 }
 
-FILE *exec_command(char *command) {
+FILE *exec_snmp(char *type, ngx_int_t version, char *community, ngx_str_t name, char *OID) {
+
+    u_char command[1024];
+
+    ngx_sprintf(command, "snmp%s -O enU -v %d -c %s %s %s", type, version, community, name, OID);
+
+    return exec_command(command);
+}
+
+FILE *exec_command(u_char *command) {
     FILE *fp;
 
     /* Open the command for reading. */
-    fp = popen(command, "r");
-    if (fp == NULL) {
-        printf("Failed to run command\n");
-        exit;
-    }
+    fp = popen((const char*) command, "r");
+    if (fp == NULL)
+       ngx_log_stderr(0, "Failed to execute command %s", command);
 
     return fp;
 }
