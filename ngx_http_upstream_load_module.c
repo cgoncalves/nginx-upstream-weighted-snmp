@@ -99,6 +99,7 @@ static char *ngx_http_upstream_load(ngx_conf_t *cf, ngx_command_t *cmd,
 //    ngx_command_t *cmd, void *conf);
 static ngx_int_t ngx_http_upstream_load_init_module(ngx_cycle_t *cycle);
 static void *ngx_http_upstream_load_create_conf(ngx_conf_t *cf);
+static ngx_int_t   ngx_http_upstream_load_preconf(ngx_conf_t *);
 //static ngx_int_t ngx_http_upstream_load_metrics(ngx_cycle_t *cycle);
 
 #if (NGX_HTTP_EXTENDED_STATUS)
@@ -113,8 +114,8 @@ static void ngx_http_upstream_load_save_session(ngx_peer_connection_t *pc,
     void *data);
 #endif
 
-void ngx_http_upstream_load_monitor(ngx_event_t *);
-ngx_int_t   ngx_http_upstream_worker_init(ngx_cycle_t *);
+static void ngx_http_upstream_load_monitor(ngx_event_t *);
+static ngx_int_t   ngx_http_upstream_worker_init(ngx_cycle_t *);
 
 static ngx_command_t  ngx_http_upstream_load_commands[] = {
 
@@ -129,7 +130,7 @@ static ngx_command_t  ngx_http_upstream_load_commands[] = {
 };
 
 static ngx_http_module_t  ngx_http_upstream_load_module_ctx = {
-    NULL,                                  /* preconfiguration */
+    ngx_http_upstream_load_preconf,        /* preconfiguration */
     NULL,                                  /* postconfiguration */
 
     NULL,                                  /* create main configuration */
@@ -166,7 +167,7 @@ static ngx_uint_t ngx_http_upstream_load_shm_size;
 static ngx_shm_zone_t * ngx_http_upstream_load_shm_zone;
 static ngx_rbtree_t * ngx_http_upstream_load_rbtree;
 static ngx_uint_t ngx_http_upstream_load_generation;
-ngx_event_t  *ngx_http_upstream_load_timer;
+static ngx_event_t  *ngx_http_upstream_load_timer;
 static ngx_http_upstream_load_srv_conf_t *ngx_http_upstream_srv_conf_ptr;
 
 void ngx_http_upstream_load_monitor(ngx_event_t *ev)
@@ -442,17 +443,22 @@ ngx_http_upstream_load_init_shm_zone(ngx_shm_zone_t *shm_zone, void *data)
  */
 static void *ngx_http_upstream_load_create_conf(ngx_conf_t *cf)
 {
-        ngx_http_upstream_load_srv_conf_t *conf = ngx_pcalloc(cf->pool, sizeof(ngx_http_upstream_load_srv_conf_t));
-        if (conf == NULL) {
-                return NGX_CONF_ERROR;
-        }
+    ngx_http_upstream_load_srv_conf_t *conf = ngx_pcalloc(cf->pool, sizeof(ngx_http_upstream_load_srv_conf_t));
+    if (conf == NULL) {
+        return NGX_CONF_ERROR;
+    }
 
-        ngx_http_upstream_load_timer = ngx_pcalloc(cf->pool, sizeof(ngx_event_t));
-        if (ngx_http_upstream_load_timer == NULL) {
-            return NGX_CONF_ERROR;
-        }
+    return conf;
+}
 
-        return conf;
+ngx_int_t ngx_http_upstream_load_preconf(ngx_conf_t *cf)
+{
+    ngx_http_upstream_load_timer = ngx_pcalloc(cf->pool, sizeof(ngx_event_t));
+    if (ngx_http_upstream_load_timer == NULL) {
+        return NGX_ERROR;
+    }
+
+    return NGX_OK;
 }
 
 static char *
