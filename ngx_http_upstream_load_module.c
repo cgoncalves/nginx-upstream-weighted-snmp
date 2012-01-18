@@ -9,7 +9,6 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
-#include <limits.h>
 #include <pthread.h>
 
 #define LOAD_DEFAULT_PERIODICITY 20000 // 20 seconds
@@ -49,8 +48,8 @@ typedef struct {
     socklen_t                           socklen;
     ngx_str_t                           name;
 
-    ngx_int_t                          weight;
-    ngx_int_t                          old_weight;
+    ngx_uint_t                          weight;
+    ngx_uint_t                          old_weight;
     Metrics                             metrics;
 
     ngx_uint_t                          max_fails;
@@ -208,25 +207,13 @@ void ngx_http_upstream_load_monitor(ngx_event_t *ev)
         return;
     }
 
-    ngx_log_stderr(0, "[MONITOR] PERIODICITY=%d", load_conf->periodicity);
-
     server_threads = malloc(peers->number * sizeof (pthread_t));
 
-    for (i = 0; i < peers->number; i++) {
-        ngx_log_stderr(0, "Thread %d", i);
-        ngx_log_stderr(0, "CURRENT PEER ID = %i", peers->current);
-        ngx_log_stderr(0, "NUMBER OF PEERS = %i", peers->number);
+    for (i = 0; i < peers->number; i++)
+       pthread_create(&server_threads[i], NULL, server_run, (void*) &peers->peer[i]);
 
-        ngx_log_stderr(0, "PEER WEIGHT = %i", peers->peer[i].weight);
-        ngx_log_stderr(0, "PEER FAILS = %i", peers->peer[i].max_fails);
-        int ret = pthread_create(&server_threads[i], NULL, server_run, (void*) &peers->peer[i]);
-
-        ngx_log_stderr(0, "Thread %d ret = %d", i, ret);
-    }
-
-    for (i = 0; i < peers->number; i++) {
+    for (i = 0; i < peers->number; i++)
         pthread_join(server_threads[i], NULL);
-    }
 
     determineNewWeights(peers->number, peers);
 
@@ -1471,15 +1458,8 @@ ngx_http_upstream_load_report_status(ngx_http_request_t *r, ngx_int_t *length)
 
 void *server_run(void *arg) {
 
-    ngx_log_stderr(0, "Inside Thread");
-
     ngx_http_upstream_load_peer_t *peer = (ngx_http_upstream_load_peer_t *) arg;
     char *name = inet_ntoa( ((struct sockaddr_in*)(peer->sockaddr))->sin_addr);
-
-    ngx_log_stderr(0, "DENTRO DA THREAD: PEER WEIGHT = %d", peer->weight);
-    ngx_log_stderr(0, "DENTRO DA THREAD: NAME = %s", peer->name.data);
-    //ngx_log_stderr(0, "DENTRO DA THREAD: SOCK ADDR = %s", inet_ntoa(((struct sockaddr_in*)&peer->sockaddr->sin_addr)));
-    ngx_log_stderr(0, "DENTRO DA THREAD: SOCK ADDR = %s", name);
 
     if(http_port_open(name))
     {
@@ -1508,18 +1488,19 @@ void *server_run(void *arg) {
 void determineNewWeights(ngx_uint_t num_peers, ngx_http_upstream_load_peers_t *peers) {
 
     ngx_http_upstream_load_srv_conf_t *load_conf = ngx_http_upstream_srv_conf_ptr;
-    ngx_int_t                          min, max;
-    ngx_uint_t                         i;
+    ngx_int_t                          max;
+    ngx_uint_t                         i, min;
 
 
     max = 0;
-    min = UINT_MAX;
+    min = ~0UL;
 
     for (i = 0; i < num_peers; i++) {
         if((peers->peer[i].metrics.connections > 0) && (peers->peer[i].metrics.connections > max))
           max = peers->peer[i].metrics.connections;
     }
 
+    //ngx_log_stderr(0, "MAX = %d", max);
     for (i = 0; i < num_peers; i++) {
 
         if (peers->peer[i].metrics.connections == NGX_ERROR)
@@ -1528,15 +1509,19 @@ void determineNewWeights(ngx_uint_t num_peers, ngx_http_upstream_load_peers_t *p
         if(max > 0)
           peers->peer[i].metrics.connections = (int) ((1 - (double) peers->peer[i].metrics.connections/max) * 100 + 0.5);
 
-        peers->peer[i].weight = (int) ((double) (load_conf->coef_cpu * peers->peer[i].metrics.cpu_free + load_conf->coef_memory * peers->peer[i].metrics.mem_free + load_conf->coef_connections * peers->peer[i].metrics.connections) + 0.5);
 
         char *name = inet_ntoa( ((struct sockaddr_in*)(peers->peer[i].sockaddr))->sin_addr);
+        //ngx_log_stderr(0, "Server %s NEW CONNECTIONS = %d", name, peers->peer[i].metrics.connections);
+
+        peers->peer[i].weight = (int) ((double) (load_conf->coef_cpu * peers->peer[i].metrics.cpu_free + load_conf->coef_memory * peers->peer[i].metrics.mem_free + load_conf->coef_connections * peers->peer[i].metrics.connections) + 0.5);
+
         ngx_log_stderr(0, "Server %s determined weight = %d", name, peers->peer[i].weight);
 
         if((peers->peer[i].weight > 0) && (peers->peer[i].weight < min))
           min = peers->peer[i].weight;
     }
 
+    //ngx_log_stderr(0, "MIN = %ud", min);
     for (i = 0; i < num_peers; i++) {
         if(min > 0)
           peers->peer[i].weight = (int) ((double) peers->peer[i].weight/min + 0.5);
@@ -1651,8 +1636,7 @@ FILE *exec_wget(char *name) {
     u_char command[512];
 
     ngx_sprintf(command, "wget -O - %s  2>&1", name);
-    ngx_log_stderr(0, "COMMAND = %s", command);
-
+    
     return exec_command(command);
 }
 
@@ -1661,7 +1645,6 @@ FILE *exec_snmp(char *type, ngx_int_t version, char *community, char *name, char
     u_char command[512];
 
     ngx_sprintf(command, "snmp%s -O enU -v %d -c %s %s %s", type, version, community, name, OID);
-    ngx_log_stderr(0, "COMMAND = %s", command);
 
     return exec_command(command);
 }
