@@ -872,7 +872,7 @@ ngx_http_upstream_choose_load_peer_busy(ngx_peer_connection_t *pc,
             best_sched_score = sched_score;
         }
 
-        ngx_log_debug7(NGX_LOG_DEBUG_HTTP, pc->log, 0, "[upstream_load] bss = %i, ss = %i (n = %d, w = %d/%d, f = %d/%d)",
+        ngx_log_error(NGX_LOG_INFO, pc->log, 0, "[upstream_load] bss = %i, ss = %i (n = %d, w = %d/%d, f = %d/%d)",
                 best_sched_score, sched_score, i, peer->shared->current_weight, peer->weight, peer->shared->fails, peer->max_fails);
     }
 
@@ -1465,6 +1465,8 @@ void determineNewWeights(ngx_uint_t num_peers, ngx_http_upstream_load_peers_t *p
           peers->peer[i].weight = 1;
 
         peers->shared->stats[i].current_weight = peers->peer[i].weight;
+
+        ngx_log_stderr(0, "Peer %d weight is %d", i, peers->peer[i].weight);
         peers->peer[i].old_weight = peers->peer[i].weight;
     }
 }
