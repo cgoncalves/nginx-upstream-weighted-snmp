@@ -115,6 +115,7 @@ static ngx_int_t ngx_http_upstream_load_init_module(ngx_cycle_t *cycle);
 static void *ngx_http_upstream_load_create_conf(ngx_conf_t *cf);
 static ngx_int_t   ngx_http_upstream_load_preconf(ngx_conf_t *);
 //static ngx_int_t ngx_http_upstream_load_metrics(ngx_cycle_t *cycle);
+static ngx_int_t ngx_http_upstream_load_shm_alloc(ngx_http_upstream_load_peers_t *usfp, ngx_log_t *log);
 
 #if (NGX_HTTP_EXTENDED_STATUS)
 static ngx_chain_t *ngx_http_upstream_load_report_status(ngx_http_request_t *r,
@@ -203,6 +204,10 @@ void ngx_http_upstream_load_monitor(ngx_event_t *ev)
     uscf = load_conf->uscf;
     peers = uscf->peer.data;
 
+    ngx_log_stderr(0, "ESTROU DENTRO DO MONITOR!!!!!!!!!!!!");
+
+    ngx_log_stderr(0, "[MONITOR] CURRENT WEIGHT DO PEER 0 EH %d", peers->shared->stats[0].current_weight);
+
     if (ngx_exiting) {
         return;
     }
@@ -220,16 +225,28 @@ void ngx_http_upstream_load_monitor(ngx_event_t *ev)
     ngx_add_timer(ev, load_conf->periodicity);
 }
 
-ngx_int_t ngx_http_upstream_worker_init(ngx_cycle_t *cycle)
+static ngx_int_t ngx_http_upstream_worker_init(ngx_cycle_t *cycle)
 {
+    ngx_log_stderr(0, "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB");
+
     ngx_connection_t  *dummy;
     ngx_pool_t  *pool;
     ngx_log_t   *log;
     ngx_http_upstream_load_srv_conf_t *load_conf;
-
-    load_conf = ngx_http_upstream_srv_conf_ptr;
+    ngx_http_upstream_srv_conf_t      *uscf;
+    ngx_http_upstream_load_peers_t    *peers;
 
     log = cycle->log;
+
+    load_conf = ngx_http_upstream_srv_conf_ptr;
+    uscf = load_conf->uscf;
+    peers = uscf->peer.data;
+
+    ngx_log_stderr(0, "VOU INICIAR A ALOCACAO DA MEMORIA PARTILHADA!!!");
+    ngx_http_upstream_load_shm_alloc(peers, log);
+    ngx_log_stderr(0, "ACABEI DE ALOCAR MEMORIA PARTILHADA!!!");
+
+    ngx_log_stderr(0, "CURRENT WEIGHT DO PEER ID 0 EH %d", peers->shared->stats[0].nreq);
 
     pool = ngx_create_pool(NGX_CYCLE_POOL_SIZE, log);
     if (pool == NULL) {
@@ -247,8 +264,8 @@ ngx_int_t ngx_http_upstream_worker_init(ngx_cycle_t *cycle)
 
     ngx_log_stderr(0, "CPU=%d, MEMORY=%d, CONNECTIONS=%d", load_conf->coef_cpu, load_conf->coef_memory, load_conf->coef_connections);
 
-    ngx_add_timer(ngx_http_upstream_load_timer, load_conf->periodicity);
-
+    // call monitor right away
+    ngx_add_timer(ngx_http_upstream_load_timer, 0);
 
     return NGX_OK;
 }
@@ -870,36 +887,37 @@ static ngx_int_t
 ngx_http_upstream_choose_load_peer_busy(ngx_peer_connection_t *pc,
     ngx_http_upstream_load_peer_data_t *fp)
 {
-    ngx_uint_t                          i, n;
+    ngx_uint_t                          i;
     ngx_uint_t                          npeers = fp->peers->number;
     //ngx_uint_t                          weight_mode = fp->peers->weight_mode;
     ngx_uint_t                          best_idx = NGX_PEER_INVALID;
-    ngx_uint_t                          sched_score;
-    ngx_uint_t                          best_sched_score = ~0UL;
+    ngx_int_t                          sched_score;
+    //ngx_uint_t                          best_sched_score = ~0UL;
+    ngx_int_t                          best_sched_score = -1;
 
     /*
      * calculate sched scores for all the peers, choosing the lowest one
      */
-    for (i = 0, n = fp->current; i < npeers; i++, n = (n + 1) % npeers) {
+    for (i = 0; i < npeers; i++) {
         ngx_http_upstream_load_peer_t      *peer;
         ngx_uint_t                          nreq;
         ngx_uint_t                          weight;
 
-        peer = &fp->peers->peer[n];
-        nreq = fp->peers->peer[n].shared->nreq;
+        peer = &fp->peers->peer[i];
+        nreq = fp->peers->peer[i].shared->nreq;
 
         //if (weight_mode == WM_PEAK && nreq >= peer->weight) {
         //    ngx_log_debug3(NGX_LOG_DEBUG_HTTP, pc->log, 0, "[upstream_load] backend %d has nreq %ui >= weight %ui in WM_PEAK mode", n, nreq, peer->weight);
         //    continue;
         //}
 
-        if (ngx_http_upstream_load_try_peer(pc, fp, n) != NGX_OK) {
+        if (ngx_http_upstream_load_try_peer(pc, fp, i) != NGX_OK) {
             if (!pc->tries) {
                 ngx_log_debug(NGX_LOG_DEBUG_HTTP, pc->log, 0, "[upstream_load] all backends exhausted");
                 return NGX_PEER_INVALID;
             }
 
-            ngx_log_debug1(NGX_LOG_DEBUG_HTTP, pc->log, 0, "[upstream_load] backend %d already tried", n);
+            ngx_log_debug1(NGX_LOG_DEBUG_HTTP, pc->log, 0, "[upstream_load] backend %d already tried", i);
             continue;
         }
 
@@ -918,21 +936,22 @@ ngx_http_upstream_choose_load_peer_busy(ngx_peer_connection_t *pc,
 
             sched_score = weight;
 
-            ngx_log_debug8(NGX_LOG_DEBUG_HTTP, pc->log, 0, "[upstream_load] SCORE OF PEER ID %i IS %i", n, sched_score);
+            ngx_log_debug8(NGX_LOG_DEBUG_HTTP, pc->log, 0, "[upstream_load] SCORE OF PEER ID %i IS %i", i, sched_score);
 
         //}
             //if (weight > 0) {
             //    sched_score /= weight;
             //}
-            ngx_log_debug8(NGX_LOG_DEBUG_HTTP, pc->log, 0, "[upstream_load] bss = %ui, ss = %ui (n = %d, w = %d/%d, f = %d/%d, weight = %d)",
-                best_sched_score, sched_score, n, peer->shared->current_weight, peer->weight, peer->shared->fails, peer->max_fails, weight);
         //}
 
         //if (sched_score <= best_sched_score) {
-        if (sched_score > best_sched_score) {
-            best_idx = n;
+        if (sched_score >= best_sched_score) {
+            best_idx = i;
             best_sched_score = sched_score;
         }
+
+        ngx_log_debug8(NGX_LOG_DEBUG_HTTP, pc->log, 0, "[upstream_load] bss = %i, ss = %i (n = %d, w = %d/%d, f = %d/%d, weight = %d)",
+                best_sched_score, sched_score, i, peer->shared->current_weight, peer->weight, peer->shared->fails, peer->max_fails, weight);
     }
 
     return best_idx;
@@ -942,6 +961,8 @@ static ngx_int_t
 ngx_http_upstream_choose_load_peer(ngx_peer_connection_t *pc,
     ngx_http_upstream_load_peer_data_t *ulpd, ngx_uint_t *peer_id)
 {
+    ngx_uint_t                          reset;
+    ngx_uint_t                          i;
     ngx_uint_t                          npeers;
     ngx_uint_t                          best_idx = NGX_PEER_INVALID;
     //ngx_uint_t                          weight_mode;
@@ -975,8 +996,22 @@ chosen:
     //if (weight_mode == WM_DEFAULT) {
         ngx_http_upstream_load_peer_t      *peer = &ulpd->peers->peer[best_idx];
 
-        if (peer->shared->current_weight-- == 0) {
-            peer->shared->current_weight = peer->weight;
+        if (--peer->shared->current_weight == 0) {
+            reset = 1;
+
+            for (i = 0;  i < npeers; i++) {
+                if (ulpd->peers->peer[i].shared->current_weight > 0) {
+                    reset = 0;
+                    break;
+                }
+            }
+
+            if (reset) {
+                for (i = 0;  i < npeers; i++) {
+                    ulpd->peers->peer[i].shared->current_weight = ulpd->peers->peer[i].weight;
+                }
+            }
+
             ngx_log_debug2(NGX_LOG_DEBUG_HTTP, pc->log, 0, "[upstream_load] peer %d expired weight, reset to %d", best_idx, peer->weight);
         }
     //}
@@ -1182,6 +1217,7 @@ ngx_http_upstream_load_shm_alloc(ngx_http_upstream_load_peers_t *usfp, ngx_log_t
     usfp->shared->total_requests = 0;
 
     for (i = 0; i < usfp->number; i++) {
+        ngx_log_stderr(0, "INITIALIZTIN SHARED MEMORY OF PEER %d", i);
             usfp->shared->stats[i].nreq = 0;
             usfp->shared->stats[i].last_req_id = 0;
             usfp->shared->stats[i].total_req = 0;
@@ -1232,6 +1268,7 @@ ngx_http_upstream_init_load_peer(ngx_http_request_t *r,
     ulp->shared->total_requests++;
 
     for (n = 0; n < ulp->number; n++) {
+        ngx_log_stderr(0, "INITIALIZTIN SHARED MEMORY OF PEER %d", n);
         ulp->peer[n].shared = &ulp->shared->stats[n];
     }
 
@@ -1536,7 +1573,10 @@ void determineNewWeights(ngx_uint_t num_peers, ngx_http_upstream_load_peers_t *p
 
         if(peers->peer[i].down == 0 && peers->peer[i].weight == 0)
           peers->peer[i].weight = 1;
-        
+
+        ngx_log_stderr(0, "ESTOU A ACTUALIZAR O CURRENT WEIGHT DENTRO DA THREAD");
+        peers->shared->stats[i].current_weight = peers->peer[i].weight;
+        ngx_log_stderr(0, "ACABEI DE INICIALIZAR O CURRENT WEIGHT DENTRO DA THREAD");
         peers->peer[i].old_weight = peers->peer[i].weight;
 
         char *name = inet_ntoa( ((struct sockaddr_in*)(peers->peer[i].sockaddr))->sin_addr);
