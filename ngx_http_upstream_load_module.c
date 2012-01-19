@@ -12,6 +12,7 @@
 #include <pthread.h>
 
 #define LOAD_DEFAULT_PERIODICITY 20000 // 20 seconds
+#define LOAD_DEFAULT_COMMUNITY "public" // SNMP community string
 
 typedef struct {
     ngx_uint_t                          nreq;
@@ -82,6 +83,7 @@ typedef struct {
     ngx_uint_t                         coef_memory;
     ngx_uint_t                         coef_connections;
     ngx_uint_t                         periodicity;
+    ngx_str_t                          community;
     ngx_http_upstream_srv_conf_t       *uscf;
 } ngx_http_upstream_load_srv_conf_t;
 
@@ -452,6 +454,7 @@ ngx_http_upstream_load(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
     ngx_uint_t coef_memory = 0;
     ngx_uint_t coef_connections = 0;
     ngx_uint_t periodicity = LOAD_DEFAULT_PERIODICITY;
+    ngx_str_t community = ngx_string(LOAD_DEFAULT_COMMUNITY);
 
     ngx_uint_t i;
     ngx_uint_t aux;
@@ -501,8 +504,29 @@ ngx_http_upstream_load(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 
         // Periodicity
         if ((u_char *)ngx_strstr(value[i].data, "periodicity=") == value[i].data) {
+
+            /* do we have at least on char after "arg=" ? */
+            if (value[i].len <= sizeof("periodicity=") - 1) {
+                ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, "a value must be provided to \"periodicity=\"");
+                return NGX_CONF_ERROR;
+            }
+
             /* return what's after "periodicity=" */
             periodicity = ngx_atoi(&value[i].data[12], value[i].len - 12);
+        }
+
+        // Community
+        if ((u_char *)ngx_strstr(value[i].data, "community=") == value[i].data) {
+
+            /* do we have at least on char after "arg=" ? */
+            if (value[i].len <= sizeof("community=") - 1) {
+                ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, "a value must be provided to \"community=\"");
+                return NGX_CONF_ERROR;
+            }
+
+            /* return what's after "community=" */
+            community.len = value[i].len - ngx_strlen("community=");
+            community.data = (u_char *)(value[i].data + sizeof("community=") - 1);
         }
     }
 
@@ -522,6 +546,7 @@ ngx_http_upstream_load(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
     load_conf->coef_memory = coef_memory;
     load_conf->coef_connections = coef_connections;
     load_conf->periodicity = periodicity;
+    load_conf->community = community;
     load_conf->uscf = uscf;
 
     ngx_http_upstream_srv_conf_ptr = load_conf;
@@ -1501,9 +1526,11 @@ void getMetrics(ngx_http_upstream_load_peer_t *peer) {
     ngx_int_t cpu_free = NGX_ERROR, mem_free = NGX_ERROR, mem_total = NGX_ERROR, connections = NGX_ERROR;
     char *name = inet_ntoa( ((struct sockaddr_in*)(peer->sockaddr))->sin_addr);
 
+    ngx_http_upstream_load_srv_conf_t *load_conf = ngx_http_upstream_srv_conf_ptr;
+
     /* Free CPU percentage */
 
-    fp = exec_snmp("walk", 1, "public", name, "1.3.6.1.2.1.25.3.3.1.2");
+    fp = exec_snmp("walk", 1, (char*)load_conf->community.data, name, "1.3.6.1.2.1.25.3.3.1.2");
 
     while (fgets(output, sizeof (output) - 1, fp) != NULL) {
         if (strstr(output, "Timeout") == NULL) {
@@ -1530,7 +1557,7 @@ void getMetrics(ngx_http_upstream_load_peer_t *peer) {
 
     /* Free Memory percentage, established TCP connections */
 
-    fp = exec_snmp("get", 1, "public", name, "1.3.6.1.4.1.2021.4.11.0 1.3.6.1.4.1.2021.4.5.0 1.3.6.1.2.1.6.9.0");
+    fp = exec_snmp("get", 1, (char*) load_conf->community.data, name, "1.3.6.1.4.1.2021.4.11.0 1.3.6.1.4.1.2021.4.5.0 1.3.6.1.2.1.6.9.0");
 
     while (fgets(output, sizeof (output) - 1, fp) != NULL) {
         if (strstr(output, "Timeout") == NULL) {
